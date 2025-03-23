@@ -204,6 +204,67 @@ grapher.Graph = class {
                 label.height = box.height;
             }
         }
+
+        enableBoxSelectionOnCanvas(this);
+
+        if (!document.getElementById('validate-extract')) {
+            var button = document.createElement('button');
+            button.id = 'validate-extract';
+            button.textContent = 'Validate & Extract';
+            // Style the button so it floats in the bottom right of the viewport.
+            Object.assign(button.style, {
+                position: 'fixed',
+                bottom: '20px',
+                right: '20px',
+                zIndex: '9999',
+                padding: '10px 15px',
+                fontSize: '14px',
+                backgroundColor: '#0074D9',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+            });
+            document.body.appendChild(button);
+
+            button.addEventListener('click', function () {
+                validateAndExtract();
+            });
+        }
+
+        if (!document.getElementById('reset-button')) {
+            // Create the reset button element.
+            const resetButton = document.createElement('button');
+            resetButton.id = 'reset-button';
+            resetButton.textContent = 'Reset Selection';
+            // Style the button as needed.
+            resetButton.style.position = 'fixed';
+            resetButton.style.bottom = '20px';
+            resetButton.style.left = '20px';
+            resetButton.style.zIndex = '10000';
+            resetButton.style.padding = '8px 12px';
+            resetButton.style.fontSize = '14px';
+            resetButton.style.cursor = 'pointer';
+
+            // Append the button to the document body.
+            document.body.appendChild(resetButton);
+
+            // Add a click event listener to the reset button.
+            resetButton.addEventListener('click', () => {
+                // If there are any nodes in the selection array:
+                if (window.doubleSelectedNodes && window.doubleSelectedNodes.length > 0) {
+                    window.doubleSelectedNodes.forEach(node => {
+                        // Remove the selection class and clear the outline style.
+                        if (node.element) {
+                            node.element.classList.remove('double-selected');
+                            node.element.style.outline = '';
+                        }
+                    });
+                    // Clear the global selection array.
+                    window.doubleSelectedNodes = [];
+                }
+            });
+        }
     }
 
     measure() {
@@ -223,7 +284,8 @@ grapher.Graph = class {
                 v: node.v,
                 width: node.label.width || 0,
                 height: node.label.height || 0,
-                parent: this.parent(node.v) });
+                parent: this.parent(node.v)
+            });
         }
         let edges = [];
         for (const edge of this.edges.values()) {
@@ -361,6 +423,30 @@ grapher.Node = class {
             block.build(document, this.element);
         }
         this.element.appendChild(this.border);
+
+        // Add a double-click event listener to the node element.
+        this.element.addEventListener('dblclick', (e) => {
+            e.stopPropagation(); // Prevent the double-click from triggering other events.
+            // Toggle double-click selection state using a new CSS class ("double-selected")
+            if (this.element.classList.contains('double-selected')) {
+                // Already double-selected: remove yellow highlight and update global state.
+                this.element.classList.remove('double-selected');
+                // Remove yellow border (or reset to red if that's the default)
+                this.element.style.outline = '';
+                if (window.doubleSelectedNodes) {
+                    window.doubleSelectedNodes = window.doubleSelectedNodes.filter(n => n !== this);
+                }
+            } else {
+                // Not double-selected: add yellow highlight and update global state.
+                this.element.classList.add('double-selected');
+                // Apply a yellow border to indicate double-click selection.
+                this.element.style.outline = '3px solid yellow';
+                if (!window.doubleSelectedNodes) {
+                    window.doubleSelectedNodes = [];
+                }
+                window.doubleSelectedNodes.push(this);
+            }
+        });
     }
 
     measure() {
@@ -698,7 +784,7 @@ grapher.Argument = class {
         }
         const colon = this.type === 'node' || this.type === 'node[]';
         const name = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
-        name.textContent =  colon ? `${this.name}:` : this.name;
+        name.textContent = colon ? `${this.name}:` : this.name;
         if (this.separator.trim() !== '=' && !colon) {
             name.style.fontWeight = 'bold';
         }
@@ -1051,3 +1137,171 @@ grapher.Edge.Path = class {
 };
 
 export const { Graph, Node, Edge, Argument } = grapher;
+
+function getSVGCoords(evt, svg) {
+    const pt = svg.createSVGPoint();
+    pt.x = evt.clientX;
+    pt.y = evt.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+// Helper: Check if two rectangles intersect.
+function rectsIntersect(r1, r2) {
+    return !(r2.left > r1.left + r1.width ||
+        r2.left + r2.width < r1.left ||
+        r2.top > r1.top + r1.height ||
+        r2.top + r2.height < r1.top);
+}
+
+// Enable box selection on the canvas only when Shift is held down.
+function enableBoxSelectionOnCanvas(graph) {
+    const svg = document.getElementById('canvas');
+    if (!svg) {
+        console.error('SVG element (#canvas) not found!');
+        return;
+    }
+
+    let startX, startY;
+    let selectionRect = null;
+
+    svg.addEventListener('pointerdown', (e) => {
+        // Only trigger if the Shift key is held.
+        if (!e.shiftKey) return;
+
+        // Prevent default dragging/panning behavior.
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('Shift + pointerdown detected on canvas');
+
+        // Convert pointer coordinates to SVG coordinates.
+        const startPos = getSVGCoords(e, svg);
+        startX = startPos.x;
+        startY = startPos.y;
+
+        // Create and append the selection rectangle.
+        selectionRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        selectionRect.style.fill = 'transparent';
+        selectionRect.style.stroke = 'black';
+        selectionRect.style.strokeDasharray = '4';
+
+        selectionRect.classList.add('selection-box');
+        selectionRect.setAttribute('x', startX);
+        selectionRect.setAttribute('y', startY);
+        selectionRect.setAttribute('width', 0);
+        selectionRect.setAttribute('height', 0);
+        svg.appendChild(selectionRect);
+
+        const onPointerMove = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const currentPos = getSVGCoords(e, svg);
+            const currentX = currentPos.x;
+            const currentY = currentPos.y;
+            const x = Math.min(startX, currentX);
+            const y = Math.min(startY, currentY);
+            const width = Math.abs(currentX - startX);
+            const height = Math.abs(currentY - startY);
+            selectionRect.setAttribute('x', x);
+            selectionRect.setAttribute('y', y);
+            selectionRect.setAttribute('width', width);
+            selectionRect.setAttribute('height', height);
+        };
+
+        const onPointerUp = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            svg.removeEventListener('pointermove', onPointerMove, { capture: true });
+            svg.removeEventListener('pointerup', onPointerUp, { capture: true });
+
+            // Get the selection rectangle's screen coordinates.
+            const selRect = selectionRect.getBoundingClientRect();
+            svg.removeChild(selectionRect);
+            selectionRect = null;
+
+            // Ensure the global doubleSelectedNodes array exists.
+            if (!window.doubleSelectedNodes) {
+                window.doubleSelectedNodes = [];
+            }
+
+            // Function to remove a node from the global selected array.
+            function unselectNode(node) {
+                node.element.classList.remove('double-selected');
+                node.element.style.outline = '';
+                window.doubleSelectedNodes = window.doubleSelectedNodes.filter(n => n !== node);
+            }
+
+            // Function to select a node.
+            function selectNode(node) {
+                node.element.classList.add('double-selected');
+                node.element.style.outline = '3px solid yellow';
+                window.doubleSelectedNodes.push(node);
+            }
+
+            // Iterate over all nodes and toggle selection if they intersect with the selection box.
+            for (const [nodeId, nodeEntry] of graph.nodes) {
+                const node = nodeEntry.label;
+                if (node.element) {
+                    const nodeBox = node.element.getBoundingClientRect();
+                    if (rectsIntersect(selRect, nodeBox)) {
+                        // Toggle selection: if already selected, unselect; otherwise, select.
+                        if (node.element.classList.contains('double-selected')) {
+                            unselectNode(node);
+                        } else {
+                            selectNode(node);
+                        }
+                    }
+                }
+            }
+        };
+
+        function rectsIntersect(r1, r2) {
+            return !(r2.left > r1.left + r1.width ||
+                r2.left + r2.width < r1.left ||
+                r2.top > r1.top + r1.height ||
+                r2.top + r2.height < r1.top);
+        }
+
+
+
+
+        svg.addEventListener('pointermove', onPointerMove, { capture: true, passive: false });
+        svg.addEventListener('pointerup', onPointerUp, { capture: true, passive: false });
+    }, { capture: true, passive: false });
+}
+
+function validateAndExtract() {
+    // Gather necessary data from your graph, for example:
+    const graphData = {
+        // Populate with selected node IDs, etc.
+        selectedNodes: window.doubleSelectedNodes ? window.doubleSelectedNodes.map(n => n.id) : []
+    };
+
+    fetch('http://127.0.0.1:5000/validate_extract', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(graphData)
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Validation or extraction failed.');
+            }
+            return response.blob();
+        })
+        .then(blob => {
+            // Create a download link for the returned ONNX file
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'extracted_subgraph.onnx';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        })
+        .catch(err => {
+            console.error(err);
+            alert(err.message);
+        });
+}
