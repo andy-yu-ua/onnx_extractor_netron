@@ -1,3 +1,36 @@
+# Sub_Netron
+
+Sub_Netron is an extension of the Netron model viewer that lets you select nodes—either via double-click or by dragging a selection box (with the Shift key held)—and extract a subgraph from an ONNX model.
+
+## Requirements
+
+Make sure you have Python installed. Then, install the required dependencies by running:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Running the Program
+To launch the full Sub_Netron workflow (Netron interface + backend processing), run:
+```bash
+python run_subnetron.py <path_to_model.onnx>
+```
+This will:
+
+* Launch the Netron interface in your browser for model inspection.
+
+* Start the backend validation and extraction script.
+
+## Usage
+
+* Shift + Drag to draw a selection box and select nodes in the graph.
+
+* Click the Reset button to unselect all currently highlighted nodes.
+
+* After pressing Validate&Extract, the tool will send the selected node IDs and model path to the backend for validation and extraction.
+
+
+## Below is the Netron's README
 <div align="center">
 <img width="400px" height="100px" src="https://github.com/lutzroeder/netron/raw/main/.github/logo-light.svg#gh-light-mode-only">
 <img width="400px" height="100px" src="https://github.com/lutzroeder/netron/raw/main/.github/logo-dark.svg#gh-dark-mode-only">
