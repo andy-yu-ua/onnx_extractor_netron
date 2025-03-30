@@ -239,8 +239,8 @@ grapher.Graph = class {
             resetButton.textContent = 'Reset Selection';
             // Style the button as needed.
             resetButton.style.position = 'fixed';
-            resetButton.style.bottom = '20px';
-            resetButton.style.left = '20px';
+            resetButton.style.bottom = '70px';
+            resetButton.style.right = '20px';
             resetButton.style.zIndex = '10000';
             resetButton.style.padding = '8px 12px';
             resetButton.style.fontSize = '14px';
@@ -265,6 +265,41 @@ grapher.Graph = class {
                 }
             });
         }
+
+        if (!document.getElementById('select-all-button')) {
+            // Create the select all button element.
+            const selectAllButton = document.createElement('button');
+            selectAllButton.id = 'select-all-button';
+            selectAllButton.textContent = 'Select All';
+            // Style the button to appear beside the reset button.
+            selectAllButton.style.position = 'fixed';
+            selectAllButton.style.bottom = '120px';
+            selectAllButton.style.right = '20px';
+            selectAllButton.style.zIndex = '10000';
+            selectAllButton.style.padding = '8px 12px';
+            selectAllButton.style.fontSize = '14px';
+            selectAllButton.style.cursor = 'pointer';
+
+            // Append the button to the document body.
+            document.body.appendChild(selectAllButton);
+
+            // Add click event to highlight all nodes in yellow.
+            selectAllButton.addEventListener('click', () => {
+                window.doubleSelectedNodes = [];
+                for (const [_, nodeEntry] of this.nodes) {
+                    const node = nodeEntry.label;
+                    if (node.element && !node.element.classList.contains('double-selected')) {
+                        node.element.classList.add('double-selected');
+                        node.element.style.outline = '3px solid yellow';
+                        window.doubleSelectedNodes.push(node);
+                    } else if (node.element) {
+                        window.doubleSelectedNodes.push(node);
+                    }
+                }
+            });
+
+        }
+
     }
 
     measure() {
@@ -431,7 +466,7 @@ grapher.Node = class {
             if (this.element.classList.contains('double-selected')) {
                 // Already double-selected: remove yellow highlight and update global state.
                 this.element.classList.remove('double-selected');
-                // Remove yellow border (or reset to red if that's the default)
+                // Remove yellow border
                 this.element.style.outline = '';
                 if (window.doubleSelectedNodes) {
                     window.doubleSelectedNodes = window.doubleSelectedNodes.filter(n => n !== this);
