@@ -34,55 +34,51 @@ def validate_and_extract_subgraph(selected_node_ids):
 
     model = onnx.load(MODEL_FILE)
 
-    # Filter nodes based on cleaned node names
-    # ensure selected_nodes only contains nodes that are present in the model
+    # Filter nodes that are selected.
     selected_nodes = [node for node in model.graph.node if node.name in cleaned_ids]
     if not selected_nodes:
         raise ValueError("No nodes selected or selected nodes not found in the model.")
 
-    # mapping: tensor -> producing node (for selected nodes)
+    # Create a mapping: tensor name -> producing node name (for selected nodes).
     tensor_producers = {}
     for node in selected_nodes:
         for out in node.output:
             tensor_producers[out] = node.name
 
-    # mapping for all initializers in the original model
+    # Map all initializers in the original model.
     model_initializers = {init.name: init for init in model.graph.initializer}
 
-    # For each selected node, if an input is not produced by a selected node, add it as an external input.
+    # Identify external inputs from selected nodes (inputs that aren't produced by a selected node).
     subgraph_inputs_names = set()
     for node in selected_nodes:
         for inp in node.input:
             if inp not in tensor_producers:
                 subgraph_inputs_names.add(inp)
 
-    # Separate constant initializers from external inputs.
+    # Separate and preserve constant initializers (present in the model's initializers).
     subgraph_initializers = []
     constant_input_names = set()
 
-    # Process external inputs: if any of those input names exist in model_initializers,
-    # they represent constant tensors (e.g., weights) that must be preserved.
     for inp in list(subgraph_inputs_names):
         if inp in model_initializers:
             subgraph_initializers.append(model_initializers[inp])
             constant_input_names.add(inp)
-    # Remove constant inputs from subgraph_inputs_names (they're now handled separately)
+    # Remove these constant inputs from the external inputs list.
     subgraph_inputs_names = subgraph_inputs_names - constant_input_names
 
-    # ***** New: Preserve Constant nodes *****
-    # Sometimes constant data is provided via Constant nodes (op_type 'Constant') rather than as initializers.
-    # Iterate over all nodes, and if any node is a Constant and its output is used by the subgraph,
-    # add its constant tensor value (from its attribute) to subgraph_initializers.
+    # For constant nodes (op_type 'Constant'), we want to include their output tensor (from the "value" attribute)
+    # if that output is used by a selected node, even if it's not captured above.
     for node in model.graph.node:
         if node.op_type == 'Constant':
             for out in node.output:
-                # If this constant output is needed by the subgraph and hasn't already been added:
-                if (out in subgraph_inputs_names or out in tensor_producers) and out not in constant_input_names:
-                    # Look for the attribute "value" which holds the constant tensor
+                if (node.name in cleaned_ids or out in subgraph_inputs_names or out in tensor_producers) and out not in constant_input_names:
                     for attr in node.attribute:
                         if attr.name == "value":
-                            # attr.t is the TensorProto for the constant value
-                            subgraph_initializers.append(attr.t)
+                            tensor = attr.t
+                            # If the tensor doesn't have a name, set it to the output name
+                            if not tensor.name:
+                                tensor.name = out
+                            subgraph_initializers.append(tensor)
                             constant_input_names.add(out)
                             print(f"Added constant from Constant node '{node.name}' with output '{out}' as initializer.")
                             break
@@ -96,24 +92,30 @@ def validate_and_extract_subgraph(selected_node_ids):
         for vi in model.graph.value_info:
             if vi.name == tensor_name:
                 return vi
-        # Fallback: create a new value info (default float type)
+        # Fall back to making a new value info with float type.
         return onnx.helper.make_tensor_value_info(tensor_name, onnx.TensorProto.FLOAT, None)
-    
     for inp in subgraph_inputs_names:
         subgraph_inputs.append(get_value_info(inp))
 
-    # Determine subgraph outputs: outputs from selected nodes that are not used as inputs internally.
+    # Determine subgraph outputs: collect outputs from selected nodes.
     selected_node_outputs = set()
     for node in selected_nodes:
         selected_node_outputs.update(node.output)
 
+    # Determine which outputs are "internally consumed" (used as input by another selected node)
     internal_consumed = set()
     for node in selected_nodes:
         for inp in node.input:
             if inp in tensor_producers:
                 internal_consumed.add(inp)
 
-    subgraph_outputs_names = list(selected_node_outputs - internal_consumed)
+    # Get the names of the original model's outputs.
+    original_outputs = set(out.name for out in model.graph.output)
+
+    # Final subgraph outputs: include outputs that
+    # - are not internally consumed OR
+    # - are part of the original model's outputs.
+    subgraph_outputs_names = list((selected_node_outputs - internal_consumed) | (selected_node_outputs & original_outputs))
     subgraph_outputs = []
     def get_output_value_info(tensor_name):
         for out in model.graph.output:
@@ -123,11 +125,10 @@ def validate_and_extract_subgraph(selected_node_ids):
             if vi.name == tensor_name:
                 return vi
         return onnx.helper.make_tensor_value_info(tensor_name, onnx.TensorProto.FLOAT, None)
-    
     for out in subgraph_outputs_names:
         subgraph_outputs.append(get_output_value_info(out))
 
-    # Optionally, print debug info:
+    # Optional debugging output
     print("Subgraph Inputs:", [inp.name for inp in subgraph_inputs])
     print("Subgraph Outputs:", [out.name for out in subgraph_outputs])
     print("Subgraph Constant Initializers:", [init.name for init in subgraph_initializers])
