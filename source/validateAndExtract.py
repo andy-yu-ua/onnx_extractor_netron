@@ -30,7 +30,7 @@ def parse_args():
 
 def validate_and_extract_subgraph(selected_node_ids):
     # Remove the prefix "node-name-" if present
-    cleaned_ids = [node_id.replace("node-name-", "") for node_id in selected_node_ids]
+    cleaned_ids = [node_id.replace("node-name-", "") for node_id in selected_node_ids if node_id is not None]
 
     model = onnx.load(MODEL_FILE)
 
