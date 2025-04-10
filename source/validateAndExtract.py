@@ -30,18 +30,15 @@ def parse_args():
 
 def validate_and_extract_subgraph(selected_node_ids):
     # Remove the prefix "node-name-" if present
-    cleaned_ids = [node_id.replace("node-name-", "")
-                   for node_id in selected_node_ids]
+    cleaned_ids = [node_id.replace("node-name-", "") for node_id in selected_node_ids]
 
     model = onnx.load(MODEL_FILE)
 
     # Filter nodes based on cleaned node names
     # ensure selected_nodes only contains nodes that are present in the model
-    selected_nodes = [
-        node for node in model.graph.node if node.name in cleaned_ids]
+    selected_nodes = [node for node in model.graph.node if node.name in cleaned_ids]
     if not selected_nodes:
-        raise ValueError(
-            "No nodes selected or selected nodes not found in the model.")
+        raise ValueError("No nodes selected or selected nodes not found in the model.")
 
     # mapping: tensor -> producing node (for selected nodes)
     tensor_producers = {}
@@ -52,13 +49,10 @@ def validate_and_extract_subgraph(selected_node_ids):
     # mapping for all initializers in the original model
     model_initializers = {init.name: init for init in model.graph.initializer}
 
-    # For each selected node, if an input is not produced by a selected node,
-    # add it as an external input.
+    # For each selected node, if an input is not produced by a selected node, add it as an external input.
     subgraph_inputs_names = set()
     for node in selected_nodes:
         for inp in node.input:
-            # If the input is not produced by a selected node, it is an external input.
-            # otherwise, it comes from a selected node and is an internal input.
             if inp not in tensor_producers:
                 subgraph_inputs_names.add(inp)
 
@@ -66,18 +60,35 @@ def validate_and_extract_subgraph(selected_node_ids):
     subgraph_initializers = []
     constant_input_names = set()
 
-    # If any of those input names exist in model_initializers, it means:
-    # They are not dynamic inputs, but rather constant tensors (ex. weight matrix).
+    # Process external inputs: if any of those input names exist in model_initializers,
+    # they represent constant tensors (e.g., weights) that must be preserved.
     for inp in list(subgraph_inputs_names):
         if inp in model_initializers:
             subgraph_initializers.append(model_initializers[inp])
             constant_input_names.add(inp)
-    # Remove constant inputs from subgraph_inputs_names
+    # Remove constant inputs from subgraph_inputs_names (they're now handled separately)
     subgraph_inputs_names = subgraph_inputs_names - constant_input_names
+
+    # ***** New: Preserve Constant nodes *****
+    # Sometimes constant data is provided via Constant nodes (op_type 'Constant') rather than as initializers.
+    # Iterate over all nodes, and if any node is a Constant and its output is used by the subgraph,
+    # add its constant tensor value (from its attribute) to subgraph_initializers.
+    for node in model.graph.node:
+        if node.op_type == 'Constant':
+            for out in node.output:
+                # If this constant output is needed by the subgraph and hasn't already been added:
+                if (out in subgraph_inputs_names or out in tensor_producers) and out not in constant_input_names:
+                    # Look for the attribute "value" which holds the constant tensor
+                    for attr in node.attribute:
+                        if attr.name == "value":
+                            # attr.t is the TensorProto for the constant value
+                            subgraph_initializers.append(attr.t)
+                            constant_input_names.add(out)
+                            print(f"Added constant from Constant node '{node.name}' with output '{out}' as initializer.")
+                            break
 
     # Build the subgraph's input value info.
     subgraph_inputs = []
-
     def get_value_info(tensor_name):
         for inp in model.graph.input:
             if inp.name == tensor_name:
@@ -85,8 +96,9 @@ def validate_and_extract_subgraph(selected_node_ids):
         for vi in model.graph.value_info:
             if vi.name == tensor_name:
                 return vi
-        # Fall back to creating a new value info with float type.
+        # Fallback: create a new value info (default float type)
         return onnx.helper.make_tensor_value_info(tensor_name, onnx.TensorProto.FLOAT, None)
+    
     for inp in subgraph_inputs_names:
         subgraph_inputs.append(get_value_info(inp))
 
@@ -103,7 +115,6 @@ def validate_and_extract_subgraph(selected_node_ids):
 
     subgraph_outputs_names = list(selected_node_outputs - internal_consumed)
     subgraph_outputs = []
-
     def get_output_value_info(tensor_name):
         for out in model.graph.output:
             if out.name == tensor_name:
@@ -112,14 +123,14 @@ def validate_and_extract_subgraph(selected_node_ids):
             if vi.name == tensor_name:
                 return vi
         return onnx.helper.make_tensor_value_info(tensor_name, onnx.TensorProto.FLOAT, None)
+    
     for out in subgraph_outputs_names:
         subgraph_outputs.append(get_output_value_info(out))
 
     # Optionally, print debug info:
     print("Subgraph Inputs:", [inp.name for inp in subgraph_inputs])
     print("Subgraph Outputs:", [out.name for out in subgraph_outputs])
-    print("Subgraph Constant Initializers:", [
-          init.name for init in subgraph_initializers])
+    print("Subgraph Constant Initializers:", [init.name for init in subgraph_initializers])
 
     # Build the new graph.
     new_graph = onnx.helper.make_graph(
@@ -131,7 +142,6 @@ def validate_and_extract_subgraph(selected_node_ids):
     )
     new_model = onnx.helper.make_model(new_graph)
     return new_model
-
 
 @app.route('/validate_extract', methods=['POST'])
 def validate_extract():
