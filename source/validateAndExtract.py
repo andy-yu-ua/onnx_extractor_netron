@@ -128,6 +128,18 @@ def validate_and_extract_subgraph(selected_node_ids):
     for out in subgraph_outputs_names:
         subgraph_outputs.append(get_output_value_info(out))
 
+    # Clean up any invalid constant initializers
+    def is_valid_initializer(tensor):
+        if not tensor.name:
+            return False
+        if tensor.raw_data:
+            return True
+        if tensor.float_data or tensor.int64_data or tensor.double_data:
+            return True
+        return False
+
+    subgraph_initializers = [init for init in subgraph_initializers if is_valid_initializer(init)]
+
     # Optional debugging output
     print("Subgraph Inputs:", [inp.name for inp in subgraph_inputs])
     print("Subgraph Outputs:", [out.name for out in subgraph_outputs])
